@@ -95,14 +95,35 @@ namespace util
 	void DisableVMProtect()
 	{
 		DWORD old_protect = 0;
+	
 		auto ntdll = GetModuleHandleA("ntdll.dll");
-		BYTE callcode = ((BYTE*)GetProcAddress(ntdll, "NtQuerySection"))[4] - 1;
-		BYTE restore[] = { 0x4C, 0x8B, 0xD1, 0xB8, callcode };
-		auto nt_vp = (BYTE*)GetProcAddress(ntdll, "NtProtectVirtualMemory");
+		if (!ntdll)
+			return;
+	
+		bool is_wine = GetProcAddress(ntdll, "wine_get_version") != nullptr;
+	
+		auto routine = reinterpret_cast<BYTE*>(
+			GetProcAddress(ntdll, is_wine ? "NtPulseEvent" : "NtQuerySection")
+		);
+		auto nt_vp = reinterpret_cast<BYTE*>(
+			GetProcAddress(ntdll, "NtProtectVirtualMemory")
+		);
+	
+		if (!routine || !nt_vp)
+			return;
+	
+		uint32_t syscall_id = *reinterpret_cast<uint32_t*>(routine + 4) - 1;
+		BYTE restore[] = {
+			0x4C, 0x8B, 0xD1, 0xB8,
+			0, 0, 0, 0
+		};
+		memcpy(restore + 4, &syscall_id, sizeof(syscall_id));
+	
 		VirtualProtect(nt_vp, sizeof(restore), PAGE_EXECUTE_READWRITE, &old_protect);
 		memcpy(nt_vp, restore, sizeof(restore));
 		VirtualProtect(nt_vp, sizeof(restore), old_protect, &old_protect);
 	}
+
 
 	// https://github.com/34736384/RSAPatch/blob/master/RSAPatch/Utils.cpp
 	uintptr_t FindEntry(uintptr_t addr)
@@ -205,3 +226,4 @@ namespace util
 		}
 	}
 }
+

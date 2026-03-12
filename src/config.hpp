@@ -9,6 +9,46 @@ namespace config
 {
 	static CSimpleIni ini;
 
+	bool TryExtractUserAssemblyHash(const std::string& line, std::string& hash)
+	{
+		const char* marker = "UserAssembly.dll";
+		size_t markerPos = line.find(marker);
+		if (markerPos == std::string::npos)
+		{
+			return false;
+		}
+
+		size_t quotePos = line.find('"', markerPos);
+		if (quotePos == std::string::npos)
+		{
+			return false;
+		}
+
+		size_t hashPos = quotePos + 1;
+		if (hashPos + 32 > line.size())
+		{
+			return false;
+		}
+
+		for (size_t i = 0; i < 32; ++i)
+		{
+			char ch = line[hashPos + i];
+			bool isHex = (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f');
+			if (!isHex)
+			{
+				return false;
+			}
+		}
+
+		if (hashPos + 32 >= line.size() || line[hashPos + 32] != '"')
+		{
+			return false;
+		}
+
+		hash = line.substr(hashPos, 32);
+		return true;
+	}
+
 	static const char* client_version;
 	static const char* config_channel;
 	static const char* config_base_url;
@@ -120,14 +160,11 @@ namespace config
 			auto path = std::filesystem::path(filename).parent_path() / "pkg_version";
 			std::ifstream infile(path);
 			std::string line;
-			std::regex str_expr = std::regex("UserAssembly.dll.*\"([0-9a-f]{32})\"");
-			auto match = std::smatch();
 			while (std::getline(infile, line))
 			{
-				std::regex_search(line, match, str_expr);
-				if (match.size() == 2)
+				std::string str_match;
+				if (TryExtractUserAssemblyHash(line, str_match))
 				{
-					auto str_match = match[1].str();
 					client_version = ini.GetValue("MD5ClientVersion", str_match.c_str(), nullptr);
 					if (client_version == nullptr)
 					{

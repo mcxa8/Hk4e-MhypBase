@@ -7,16 +7,51 @@
 #include "config.hpp"
 #include "util.hpp"
 
-namespace hook
+	namespace hook
 {
-	const char* WarnLuaScript = "[warn] Server is trying to execute a Lua script remotely, which is potentially dangerous if not from a trusted source.";
+		const char* WarnLuaScript = "[warn] Server is trying to execute a Lua script remotely, which is potentially dangerous if not from a trusted source.";
 
-	std::string uint64_to_hex_string(uint64_t value)
-	{
-		std::ostringstream os;
-		os << "0x" << std::hex << std::uppercase << std::setfill('0') << std::setw(8) << value;
-		return os.str();
-	}
+		std::string uint64_to_hex_string(uint64_t value)
+		{
+			char buffer[32] = {};
+			sprintf_s(buffer, "0x%08llX", static_cast<unsigned long long>(value));
+			return buffer;
+		}
+
+		bool IsUrlCharacter(char ch)
+		{
+			return (ch >= 'a' && ch <= 'z') ||
+				(ch >= 'A' && ch <= 'Z') ||
+				(ch >= '0' && ch <= '9') ||
+				ch == '.' || ch == '-' || ch == ':' || ch == '/';
+		}
+
+		std::string ReplaceFirstHttpUrl(std::string text, const char* replacement)
+		{
+			if (replacement == nullptr)
+			{
+				return text;
+			}
+
+			size_t start = text.find("http://");
+			if (start == std::string::npos)
+			{
+				start = text.find("https://");
+			}
+			if (start == std::string::npos)
+			{
+				return text;
+			}
+
+			size_t end = start;
+			while (end < text.size() && IsUrlCharacter(text[end]))
+			{
+				++end;
+			}
+
+			text.replace(start, end - start, replacement);
+			return text;
+		}
 
 	LPVOID MiHoYo__SDK__SDKUtil_RSAEncrypt(LPVOID publicKey, LPVOID content)
 	{
@@ -137,8 +172,7 @@ namespace hook
 			if (config != nullptr)
 			{
 				util::Log("[hook] Reached StreamingAssets\\MiHoYoSDKRes\\PC\\mihoyo_sdk_res, and using the configured value.");
-				std::regex pattern("(https?://[a-z0-9\\.\\-:]+)");
-				text = std::regex_replace(text, pattern, config);
+				text = ReplaceFirstHttpUrl(text, config);
 				return text.c_str();
 			}
 		}

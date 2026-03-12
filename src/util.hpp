@@ -4,14 +4,112 @@
 
 namespace util
 {
-	void Log(const char* text)
+	inline std::mutex log_mutex;
+	inline std::ofstream log_file;
+	inline HANDLE console_output = nullptr;
+
+	inline HMODULE GetSelfModuleHandle()
 	{
-		std::cout << "[mhypbase] " << text << std::endl;
+		MEMORY_BASIC_INFORMATION mbi;
+		return ((::VirtualQuery(GetSelfModuleHandle, &mbi, sizeof(mbi)) != 0) ? (HMODULE)mbi.AllocationBase : NULL);
 	}
 
-	void Logf(const char* fmt, ...)
+	inline std::string GetModulePath()
 	{
-		char text[1024];
+		char filename[MAX_PATH] = {};
+		GetModuleFileNameA(GetSelfModuleHandle(), filename, MAX_PATH);
+		return filename;
+	}
+
+	inline std::string GetFilePathInModuleDirectory(const char* filename)
+	{
+		auto path = std::filesystem::path(GetModulePath()).parent_path() / filename;
+		return path.string();
+	}
+
+	inline std::string GetConfigPath()
+	{
+		return GetFilePathInModuleDirectory("mhypbase.ini");
+	}
+
+	inline std::string GetLogPath()
+	{
+		return GetFilePathInModuleDirectory("mhypbase.log");
+	}
+
+	inline std::string GetTimestamp()
+	{
+		SYSTEMTIME st = {};
+		GetLocalTime(&st);
+		char buffer[64] = {};
+		sprintf_s(buffer, "%04u-%02u-%02u %02u:%02u:%02u.%03u",
+			st.wYear,
+			st.wMonth,
+			st.wDay,
+			st.wHour,
+			st.wMinute,
+			st.wSecond,
+			st.wMilliseconds);
+		return buffer;
+	}
+
+	inline const char* GetWineVersion()
+	{
+		auto ntdll = GetModuleHandleA("ntdll.dll");
+		if (ntdll == nullptr)
+		{
+			return nullptr;
+		}
+
+		using wine_get_version_t = const char* (__cdecl*)();
+		auto wine_get_version = reinterpret_cast<wine_get_version_t>(GetProcAddress(ntdll, "wine_get_version"));
+		if (wine_get_version == nullptr)
+		{
+			return nullptr;
+		}
+
+		return wine_get_version();
+	}
+
+	inline void EnsureLogFileOpenLocked()
+	{
+		if (!log_file.is_open())
+		{
+			log_file.open(GetLogPath(), std::ios::out | std::ios::app);
+		}
+	}
+
+	inline void WriteLine(const char* level, const char* text)
+	{
+		std::lock_guard<std::mutex> lock(log_mutex);
+		EnsureLogFileOpenLocked();
+
+		std::ostringstream stream;
+		stream << GetTimestamp() << " [pid:" << GetCurrentProcessId() << "] [tid:" << GetCurrentThreadId() << "] [" << level << "] " << (text ? text : "");
+		const std::string line = stream.str();
+
+		if (log_file.is_open())
+		{
+			log_file << line << std::endl;
+			log_file.flush();
+		}
+
+		if (console_output != nullptr && console_output != INVALID_HANDLE_VALUE)
+		{
+			DWORD written = 0;
+			WriteConsoleA(console_output, line.c_str(), static_cast<DWORD>(line.size()), &written, nullptr);
+			WriteConsoleA(console_output, "\n", 1, &written, nullptr);
+		}
+	}
+
+	inline void Log(const char* text)
+	{
+		WriteLine("info", text);
+	}
+
+	inline void Logf(const char* fmt, ...)
+	{
+		char text[2048] = {};
 
 		va_list args;
 		va_start(args, fmt);
@@ -21,40 +119,55 @@ namespace util
 		Log(text);
 	}
 
-	std::ofstream fout;
-
-	void Flogf(const char* fmt, ...)
+	inline void LogLastError(const char* action)
 	{
-		if (!fout.is_open())
-			fout.open("mhypbase.log");
+		const DWORD error = GetLastError();
+		LPSTR buffer = nullptr;
+		const DWORD messageLength = FormatMessageA(
+			FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+			nullptr,
+			error,
+			MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+			reinterpret_cast<LPSTR>(&buffer),
+			0,
+			nullptr);
 
-		char text[1024];
+		if (messageLength == 0 || buffer == nullptr)
+		{
+			Logf("%s failed with Win32 error %lu.", action, error);
+			return;
+		}
+
+		DWORD trimmedLength = messageLength;
+		while (trimmedLength > 0 && (buffer[trimmedLength - 1] == '\r' || buffer[trimmedLength - 1] == '\n'))
+		{
+			buffer[trimmedLength - 1] = '\0';
+			--trimmedLength;
+		}
+
+		Logf("%s failed with Win32 error %lu: %s", action, error, buffer);
+		LocalFree(buffer);
+	}
+
+	inline void Flogf(const char* fmt, ...)
+	{
+		char text[2048] = {};
 
 		va_list args;
 		va_start(args, fmt);
 		vsprintf_s(text, fmt, args);
 		va_end(args);
 
-		fout << text << std::endl;
-		fout.flush();
+		WriteLine("dump", text);
 	}
 
-	HMODULE GetSelfModuleHandle()
+	inline std::string ConvertToString(VOID* ptr)
 	{
-		MEMORY_BASIC_INFORMATION mbi;
-		return ((::VirtualQuery(GetSelfModuleHandle, &mbi, sizeof(mbi)) != 0) ? (HMODULE)mbi.AllocationBase : NULL);
-	}
+		if (ptr == nullptr)
+		{
+			return {};
+		}
 
-	std::string GetConfigPath()
-	{
-		char filename[MAX_PATH] = {};
-		GetModuleFileName(GetSelfModuleHandle(), filename, MAX_PATH);
-		auto path = std::filesystem::path(filename).parent_path() / "mhypbase.ini";
-		return path.string();
-	}
-
-	std::string ConvertToString(VOID* ptr)
-	{
 		auto bytePtr = reinterpret_cast<unsigned char*>(ptr);
 		auto lengthPtr = reinterpret_cast<unsigned int*>(bytePtr + 0x10);
 		auto charPtr = reinterpret_cast<char16_t*>(bytePtr + 0x14);
@@ -66,59 +179,112 @@ namespace util
 		return converter.to_bytes(u16);
 	}
 
-	void InitConsole()
+	inline void InitConsole()
 	{
-		AllocConsole();
+		const BOOL attached = AttachConsole(ATTACH_PARENT_PROCESS);
+		if (!attached)
+		{
+			const DWORD attachError = GetLastError();
+			if (attachError != ERROR_ACCESS_DENIED)
+			{
+				if (!AllocConsole())
+				{
+					LogLastError("AllocConsole");
+					return;
+				}
+			}
+		}
 
-		freopen_s((FILE**)stdout, "CONOUT$", "w", stdout);
-		freopen_s((FILE**)stderr, "CONOUT$", "w", stderr);
+		console_output = GetStdHandle(STD_OUTPUT_HANDLE);
+		if (console_output == nullptr || console_output == INVALID_HANDLE_VALUE)
+		{
+			LogLastError("GetStdHandle(STD_OUTPUT_HANDLE)");
+			return;
+		}
 
-		auto consoleWindow = GetConsoleWindow();
-		SetForegroundWindow(consoleWindow);
-		ShowWindow(consoleWindow, SW_RESTORE);
-		ShowWindow(consoleWindow, SW_SHOW);
+		auto console_input = GetStdHandle(STD_INPUT_HANDLE);
+		if (console_input != nullptr && console_input != INVALID_HANDLE_VALUE)
+		{
+			SetConsoleMode(console_input,
+				ENABLE_INSERT_MODE | ENABLE_EXTENDED_FLAGS | ENABLE_PROCESSED_INPUT | ENABLE_QUICK_EDIT_MODE);
+		}
+
+		SetConsoleMode(console_output, ENABLE_PROCESSED_OUTPUT | ENABLE_WRAP_AT_EOL_OUTPUT);
+		Log("Console initialized.");
 	}
 
-	void DisableLogReport()
+	inline void DisableLogReport()
 	{
 		char filename[MAX_PATH] = {};
-		GetModuleFileName(NULL, filename, MAX_PATH);
+		GetModuleFileNameA(NULL, filename, MAX_PATH);
 
 		auto path = std::filesystem::path(filename);
 		path = path.parent_path() / (path.stem().string() + "_Data") / "Plugins";
 
-		CreateFileW((path / "Astrolabe.dll").c_str(), GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-		CreateFileW((path / "MiHoYoMTRSDK.dll").c_str(), GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+		const auto astrolabePath = path / "Astrolabe.dll";
+		const auto sdkPath = path / "MiHoYoMTRSDK.dll";
+		Logf("Trying to lock log report modules: %s ; %s", astrolabePath.string().c_str(), sdkPath.string().c_str());
+
+		HANDLE astrolabeHandle = CreateFileW(astrolabePath.c_str(), GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+		if (astrolabeHandle == INVALID_HANDLE_VALUE)
+		{
+			LogLastError("CreateFileW(Astrolabe.dll)");
+		}
+
+		HANDLE sdkHandle = CreateFileW(sdkPath.c_str(), GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+		if (sdkHandle == INVALID_HANDLE_VALUE)
+		{
+			LogLastError("CreateFileW(MiHoYoMTRSDK.dll)");
+		}
 	}
 
-	// https://github.com/yubie-re/vmp-virtualprotect-bypass/blob/main/src/vp-patch.hpp
-	void DisableVMProtect()
+	inline void DisableVMProtect()
 	{
 		auto ntdll = GetModuleHandleA("ntdll.dll");
 		if (ntdll == nullptr)
 		{
-			Log("Failed to get ntdll.dll handle.");
+			Log("ntdll.dll is not loaded, skipping VMProtect patch.");
 			return;
 		}
 
-		auto nt_vp = reinterpret_cast<BYTE*>(GetProcAddress(ntdll, "NtProtectVirtualMemory"));
-		bool wine = GetProcAddress(ntdll, "wine_get_version") != nullptr;
-		auto routine = reinterpret_cast<BYTE*>(GetProcAddress(ntdll, wine ? "NtPulseEvent" : "NtQuerySection"));
-		if (nt_vp == nullptr || routine == nullptr)
+		auto ntProtectVirtualMemory = reinterpret_cast<std::uint8_t*>(GetProcAddress(ntdll, "NtProtectVirtualMemory"));
+		auto ntQuerySection = reinterpret_cast<std::uint8_t*>(GetProcAddress(ntdll, "NtQuerySection"));
+		auto ntPulseEvent = reinterpret_cast<std::uint8_t*>(GetProcAddress(ntdll, "NtPulseEvent"));
+		const bool isWine = GetWineVersion() != nullptr;
+		auto sourceRoutine = isWine ? ntPulseEvent : ntQuerySection;
+
+		if (ntProtectVirtualMemory == nullptr || sourceRoutine == nullptr)
 		{
-			Log("Failed to resolve ntdll exports for VMProtect bypass.");
+			Logf("Unable to resolve VMProtect patch routines. NtProtectVirtualMemory=%p NtQuerySection=%p NtPulseEvent=%p",
+				ntProtectVirtualMemory,
+				ntQuerySection,
+				ntPulseEvent);
 			return;
 		}
 
-		DWORD old_protect = 0;
-		VirtualProtect(nt_vp, sizeof(uintptr_t), PAGE_EXECUTE_READWRITE, &old_protect);
-		*reinterpret_cast<uintptr_t*>(nt_vp) = *reinterpret_cast<uintptr_t*>(routine) & ~(0xFFui64 << 32)
-			| (static_cast<uintptr_t>(*reinterpret_cast<uint32_t*>(routine + 4) - 1) << 32);
-		VirtualProtect(nt_vp, sizeof(uintptr_t), old_protect, &old_protect);
+		DWORD oldProtect = 0;
+		if (!VirtualProtect(ntProtectVirtualMemory, sizeof(uintptr_t), PAGE_EXECUTE_READWRITE, &oldProtect))
+		{
+			LogLastError("VirtualProtect(NtProtectVirtualMemory)");
+			return;
+		}
+
+		uintptr_t patchedStub = *reinterpret_cast<uintptr_t*>(sourceRoutine);
+		patchedStub &= ~(0xFFull << 32);
+		patchedStub |= static_cast<uintptr_t>(*reinterpret_cast<std::uint32_t*>(sourceRoutine + 4) - 1) << 32;
+		*reinterpret_cast<uintptr_t*>(ntProtectVirtualMemory) = patchedStub;
+
+		DWORD restoredProtect = 0;
+		if (!VirtualProtect(ntProtectVirtualMemory, sizeof(uintptr_t), oldProtect, &restoredProtect))
+		{
+			LogLastError("VirtualProtect restore(NtProtectVirtualMemory)");
+		}
+
+		Logf("Patched NtProtectVirtualMemory using %s stub at %p.", isWine ? "NtPulseEvent/Wine" : "NtQuerySection/Windows", sourceRoutine);
 	}
 
 	// https://github.com/34736384/RSAPatch/blob/master/RSAPatch/Utils.cpp
-	uintptr_t FindEntry(uintptr_t addr)
+	inline uintptr_t FindEntry(uintptr_t addr)
 	{
 		__try
 		{
@@ -139,7 +305,7 @@ namespace util
 	}
 
 	// https://github.com/34736384/RSAPatch/blob/master/RSAPatch/Utils.cpp
-	uintptr_t PatternScan(LPCSTR module, LPCSTR pattern)
+	inline uintptr_t PatternScan(LPCSTR module, LPCSTR pattern)
 	{
 		static auto pattern_to_byte = [](const char* pattern)
 		{
@@ -195,7 +361,7 @@ namespace util
 		return 0;
 	}
 
-	void DumpAddress(uint32_t start, long magic_a, long magic_b)
+	inline void DumpAddress(uint32_t start, long magic_a, long magic_b)
 	{
 		uintptr_t baseAddress = (uintptr_t)GetModuleHandle("UserAssembly.dll");
 		for (uint32_t i = start; ; i++)

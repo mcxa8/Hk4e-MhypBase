@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pch.h"
+#include "util.hpp"
 #include <map>
 
 #define CALL_ORIGIN(function, ...) HookManager::call(function, __func__, __VA_ARGS__)
@@ -11,16 +12,6 @@ public:
 	template <typename Fn>
 	static void install(Fn func, Fn handler)
 	{
-		if (func == nullptr)
-		{
-			std::cout << "Skip hook install because target function is null." << std::endl;
-			return;
-		}
-		if (handler == nullptr)
-		{
-			std::cout << "Skip hook install because handler is null." << std::endl;
-			return;
-		}
 		enable(func, handler);
 		holderMap[reinterpret_cast<void*>(handler)] = reinterpret_cast<void*>(func);
 	}
@@ -29,7 +20,7 @@ public:
 	{
 		if (holderMap.count(reinterpret_cast<void*>(handler)) == 0)
 		{
-			std::cout << "Origin not found for handler: " << callerName << ". Maybe racing bug." << std::endl;
+			util::Logf("Origin not found for handler: %s. Maybe racing bug.", callerName == nullptr ? "<unknown>" : callerName);
 			return nullptr;
 		}
 		return reinterpret_cast<Fn>(holderMap[reinterpret_cast<void*>(handler)]);
@@ -63,17 +54,34 @@ private:
 	static void disable(Fn handler)
 	{
 		Fn origin = getOrigin(handler);
-		DetourTransactionBegin();
-		DetourUpdateThread(GetCurrentThread());
-		DetourDetach(&(PVOID&)origin, handler);
-		DetourTransactionCommit();
+		const LONG beginStatus = DetourTransactionBegin();
+		const LONG updateStatus = DetourUpdateThread(GetCurrentThread());
+		const LONG detachStatus = DetourDetach(&(PVOID&)origin, handler);
+		const LONG commitStatus = DetourTransactionCommit();
+		util::Logf("Detour detach target=%p handler=%p begin=%ld update=%ld detach=%ld commit=%ld",
+			reinterpret_cast<void*>(origin),
+			reinterpret_cast<void*>(handler),
+			beginStatus,
+			updateStatus,
+			detachStatus,
+			commitStatus);
 	}
 	template <typename Fn>
 	static void enable(Fn& func, Fn handler)
 	{
-		DetourTransactionBegin();
-		DetourUpdateThread(GetCurrentThread());
-		DetourAttach(&(PVOID&)func, handler);
-		DetourTransactionCommit();
+		util::Logf("Installing hook target=%p handler=%p",
+			reinterpret_cast<void*>(func),
+			reinterpret_cast<void*>(handler));
+		const LONG beginStatus = DetourTransactionBegin();
+		const LONG updateStatus = DetourUpdateThread(GetCurrentThread());
+		const LONG attachStatus = DetourAttach(&(PVOID&)func, handler);
+		const LONG commitStatus = DetourTransactionCommit();
+		util::Logf("Detour attach target=%p handler=%p begin=%ld update=%ld attach=%ld commit=%ld",
+			reinterpret_cast<void*>(func),
+			reinterpret_cast<void*>(handler),
+			beginStatus,
+			updateStatus,
+			attachStatus,
+			commitStatus);
 	}
 };

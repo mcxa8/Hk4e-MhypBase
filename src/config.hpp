@@ -45,12 +45,6 @@ namespace config
 
 	uintptr_t GetAddress(uintptr_t baseAddress, const char* a_pKey, long a_nDefault)
 	{
-		if (baseAddress == 0)
-		{
-			util::Logf("Failed to resolve %s because UserAssembly.dll is not loaded.", a_pKey);
-			return 0;
-		}
-
 		auto offset = GetOffsetValue(a_pKey, a_nDefault);
 		if (offset == 0)
 		{
@@ -78,8 +72,7 @@ namespace config
 		}
 		else
 		{
-			util::Logf("[%s] Failed to resolve %s", client_version, a_pKey);
-			return 0;
+			util::Logf("[%s] Failed to resolve %s", client_version == nullptr ? "<null>" : client_version, a_pKey);
 		}
 		return baseAddress + offset;
 	}
@@ -112,7 +105,9 @@ namespace config
 	void Load()
 	{
 		ini.SetUnicode();
-		ini.LoadFile(util::GetConfigPath().c_str());
+		auto configPath = util::GetConfigPath();
+		auto loadStatus = ini.LoadFile(configPath.c_str());
+		util::Logf("Loaded config file %s with status %d", configPath.c_str(), loadStatus);
 		if (GetEnableValue("EnableConsole", false))
 		{
 			util::InitConsole();
@@ -150,5 +145,14 @@ namespace config
 		public_rsa_key = ini.GetValue("Value", "PublicRSAKey", nullptr);
 		rsa_encrypt_key = ini.GetValue("Value", "RSAEncryptKey", public_rsa_key);
 		private_rsa_key = ini.GetValue("Value", "PrivateRSAKey", nullptr);
+		util::Logf("Config summary: version=%s magic_a=%ld magic_b=%ld ConfigChannel=%s ConfigBaseUrl=%s PublicRSAKey=%s RSAEncryptKey=%s PrivateRSAKey=%s",
+			client_version == nullptr ? "<null>" : client_version,
+			magic_a,
+			magic_b,
+			config_channel == nullptr ? "unset" : "set",
+			config_base_url == nullptr ? "unset" : "set",
+			public_rsa_key == nullptr ? "unset" : "set",
+			rsa_encrypt_key == nullptr ? "unset" : "set",
+			private_rsa_key == nullptr ? "unset" : "set");
 	}
 }

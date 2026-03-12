@@ -19,6 +19,7 @@ namespace app
 VOID init_il2cpp()
 {
 	uintptr_t baseAddress = (UINT64)GetModuleHandle("UserAssembly.dll");
+	util::Logf("Initializing il2cpp with UserAssembly.dll base=%p", reinterpret_cast<void*>(baseAddress));
 
 #define DO_API(a, r, n, p) n = (r(*) p)(config::GetAddress(baseAddress, #n, a))
 #include "il2cpp-api-functions.h"
@@ -27,4 +28,5 @@ VOID init_il2cpp()
 #define DO_APP_FUNC(a, r, n, p) n = (r(*) p)(config::GetAddress(baseAddress, #n, a))
 #include "il2cpp-functions.h"
 #undef DO_APP_FUNC
+	util::Log("Finished resolving il2cpp exports and app functions.");
 }

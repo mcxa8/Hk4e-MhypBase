@@ -10,9 +10,15 @@
 
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
+#include <mutex>
 #include <regex>
+#include <sstream>
 #include <string>
+#include <vector>
 #include <codecvt>
+#include <cstdarg>
+#include <cstdint>
 
 #endif

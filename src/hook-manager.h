@@ -11,6 +11,16 @@ public:
 	template <typename Fn>
 	static void install(Fn func, Fn handler)
 	{
+		if (func == nullptr)
+		{
+			std::cout << "Skip hook install because target function is null." << std::endl;
+			return;
+		}
+		if (handler == nullptr)
+		{
+			std::cout << "Skip hook install because handler is null." << std::endl;
+			return;
+		}
 		enable(func, handler);
 		holderMap[reinterpret_cast<void*>(handler)] = reinterpret_cast<void*>(func);
 	}

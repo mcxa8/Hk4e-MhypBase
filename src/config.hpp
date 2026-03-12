@@ -207,6 +207,11 @@ namespace config
 				client_version = "Offset";
 			}
 		}
+		if (client_version == nullptr)
+		{
+			client_version = "Offset";
+			util::Log("Client version detection failed, falling back to [Offset].");
+		}
 		magic_a = ini.GetLongValue(client_version, "magic_a", 0);
 		magic_b = ini.GetLongValue(client_version, "magic_b", 0);
 		config_channel = ini.GetValue("Value", "ConfigChannel", nullptr);

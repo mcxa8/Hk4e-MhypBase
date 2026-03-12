@@ -155,6 +155,18 @@
 		return CALL_ORIGIN(MoleMole__RSAUtil_RSAVerifyData, il2cpp_string_new(priv), bytes, sign);
 	}
 
+	LPVOID MoleMole__Miscs_GetConfigChannel()
+	{
+		const char* channel = config::GetConfigChannel();
+		if (channel == nullptr)
+		{
+			return CALL_ORIGIN(MoleMole__Miscs_GetConfigChannel);
+		}
+
+		util::Log("[hook] Reached MoleMole__Miscs_GetConfigChannel, and using the configured value.");
+		return il2cpp_string_new(channel);
+	}
+
 	std::string TryPatchConfig(std::string text)
 	{
 		if (text.find("DispatchConfigs") != std::string::npos)
@@ -236,7 +248,7 @@
 		}
 		if (config::GetConfigChannel() != nullptr)
 		{
-			HookManager::install(app::MoleMole__Miscs_GetConfigChannel, app::MoleMole__Miscs_LoadChannelConfigBlk);
+			HookManager::install(app::MoleMole__Miscs_GetConfigChannel, MoleMole__Miscs_GetConfigChannel);
 		}
 		if (config::GetEnableValue("DropRCEPacket", false))
 		{

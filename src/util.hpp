@@ -4,14 +4,14 @@
 
 namespace util
 {
-	inline std::mutex log_mutex;
-	inline std::ofstream log_file;
 	inline HANDLE console_output = nullptr;
 	inline HANDLE console_error = nullptr;
 	inline HANDLE console_input = nullptr;
 	inline HANDLE old_console_output = nullptr;
 	inline HANDLE old_console_error = nullptr;
 	inline HANDLE old_console_input = nullptr;
+	inline HANDLE log_file_handle = INVALID_HANDLE_VALUE;
+	inline bool log_file_unavailable = false;
 
 	inline HMODULE GetSelfModuleHandle()
 	{
@@ -42,12 +42,11 @@ namespace util
 		return GetFilePathInModuleDirectory("mhypbase.log");
 	}
 
-	inline std::string GetTimestamp()
+	inline void GetTimestamp(char* buffer, size_t bufferSize)
 	{
 		SYSTEMTIME st = {};
 		GetLocalTime(&st);
-		char buffer[64] = {};
-		sprintf_s(buffer, "%04u-%02u-%02u %02u:%02u:%02u.%03u",
+		sprintf_s(buffer, bufferSize, "%04u-%02u-%02u %02u:%02u:%02u.%03u",
 			st.wYear,
 			st.wMonth,
 			st.wDay,
@@ -55,7 +54,6 @@ namespace util
 			st.wMinute,
 			st.wSecond,
 			st.wMilliseconds);
-		return buffer;
 	}
 
 	inline const char* GetWineVersion()
@@ -76,12 +74,84 @@ namespace util
 		return wine_get_version();
 	}
 
-	inline void EnsureLogFileOpenLocked()
+	inline bool GetLogPathA(char* buffer, DWORD bufferSize)
 	{
-		if (!log_file.is_open())
+		char filename[MAX_PATH] = {};
+		DWORD length = GetModuleFileNameA(nullptr, filename, MAX_PATH);
+		if (length == 0 || length >= MAX_PATH)
 		{
-			log_file.open(GetLogPath(), std::ios::out | std::ios::app);
+			return strcpy_s(buffer, bufferSize, "mhypbase.log") == 0;
 		}
+
+		for (DWORD i = length; i > 0; --i)
+		{
+			if (filename[i - 1] == '\\' || filename[i - 1] == '/')
+			{
+				filename[i] = '\0';
+				break;
+			}
+		}
+
+		return sprintf_s(buffer, bufferSize, "%smhypbase.log", filename) > 0;
+	}
+
+	inline HANDLE EnsureLogFileOpen()
+	{
+		if (log_file_handle != INVALID_HANDLE_VALUE)
+		{
+			return log_file_handle;
+		}
+
+		if (log_file_unavailable)
+		{
+			return INVALID_HANDLE_VALUE;
+		}
+
+		char path[MAX_PATH] = {};
+		if (!GetLogPathA(path, MAX_PATH))
+		{
+			strcpy_s(path, "mhypbase.log");
+		}
+
+		log_file_handle = CreateFileA(path, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+		if (log_file_handle == INVALID_HANDLE_VALUE)
+		{
+			log_file_handle = CreateFileA("mhypbase.log", FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+		}
+
+		if (log_file_handle == INVALID_HANDLE_VALUE)
+		{
+			char tempPath[MAX_PATH] = {};
+			DWORD tempLength = GetTempPathA(MAX_PATH, tempPath);
+			if (tempLength > 0 && tempLength < MAX_PATH)
+			{
+				char tempLogPath[MAX_PATH] = {};
+				if (sprintf_s(tempLogPath, "%smhypbase.log", tempPath) > 0)
+				{
+					log_file_handle = CreateFileA(tempLogPath, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+				}
+			}
+		}
+
+		if (log_file_handle == INVALID_HANDLE_VALUE)
+		{
+			log_file_unavailable = true;
+		}
+
+		return log_file_handle;
+	}
+
+	inline void WriteFileLine(const char* text)
+	{
+		HANDLE file = EnsureLogFileOpen();
+		if (file == INVALID_HANDLE_VALUE)
+		{
+			return;
+		}
+
+		DWORD written = 0;
+		WriteFile(file, text, static_cast<DWORD>(strlen(text)), &written, nullptr);
+		WriteFile(file, "\r\n", 2, &written, nullptr);
 	}
 
 	inline void AttachConsole()
@@ -150,20 +220,25 @@ namespace util
 
 	inline void WriteLine(const char* level, const char* text)
 	{
-		std::lock_guard<std::mutex> lock(log_mutex);
-		EnsureLogFileOpenLocked();
+		char timestamp[64] = {};
+		GetTimestamp(timestamp, sizeof(timestamp));
 
-		std::ostringstream stream;
-		stream << GetTimestamp() << " [pid:" << GetCurrentProcessId() << "] [tid:" << GetCurrentThreadId() << "] [" << level << "] " << (text ? text : "");
-		const std::string line = stream.str();
+		char line[4096] = {};
+		_snprintf_s(
+			line,
+			sizeof(line),
+			_TRUNCATE,
+			"%s [pid:%lu] [tid:%lu] [%s] %s",
+			timestamp,
+			GetCurrentProcessId(),
+			GetCurrentThreadId(),
+			level == nullptr ? "info" : level,
+			text == nullptr ? "" : text);
 
-		if (log_file.is_open())
-		{
-			log_file << line << std::endl;
-			log_file.flush();
-		}
-
-		ConsolePrint("%s\n", line.c_str());
+		WriteFileLine(line);
+		OutputDebugStringA(line);
+		OutputDebugStringA("\n");
+		ConsolePrint("%s\n", line);
 	}
 
 	inline void Log(const char* text)
@@ -177,7 +252,7 @@ namespace util
 
 		va_list args;
 		va_start(args, fmt);
-		vsprintf_s(text, fmt, args);
+		_vsnprintf_s(text, sizeof(text), _TRUNCATE, fmt, args);
 		va_end(args);
 
 		Log(text);
@@ -219,7 +294,7 @@ namespace util
 
 		va_list args;
 		va_start(args, fmt);
-		vsprintf_s(text, fmt, args);
+		_vsnprintf_s(text, sizeof(text), _TRUNCATE, fmt, args);
 		va_end(args);
 
 		WriteLine("dump", text);

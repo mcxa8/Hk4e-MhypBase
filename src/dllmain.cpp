@@ -119,8 +119,10 @@ void __stdcall TlsCallback(PVOID hModule, DWORD fdwReason, PVOID pContext)
 {
 	if (!TlsOnce)
 	{
+		util::Logf("TLS callback entered: module=%p reason=%lu context=%p", hModule, fdwReason, pContext);
 		util::DisableLogReport();
 		exports::Load();
+		util::Log("TLS callback finished early initialization.");
 		TlsOnce = true;
 	}
 }

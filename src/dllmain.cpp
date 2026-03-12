@@ -60,6 +60,7 @@ namespace
 
 DWORD WINAPI Thread(LPVOID lpParam)
 {
+	util::AttachConsole();
 	util::Log("Worker thread started.");
 	util::Logf("Worker thread parameter=%p", lpParam);
 	const char* wineVersion = util::GetWineVersion();
@@ -111,3 +112,21 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 	}
 	return TRUE;
 }
+
+bool TlsOnce = false;
+
+void __stdcall TlsCallback(PVOID hModule, DWORD fdwReason, PVOID pContext)
+{
+	if (!TlsOnce)
+	{
+		util::DisableLogReport();
+		exports::Load();
+		TlsOnce = true;
+	}
+}
+
+#pragma comment(linker, "/INCLUDE:_tls_used")
+#pragma comment(linker, "/INCLUDE:tls_callback_func")
+#pragma const_seg(".CRT$XLF")
+EXTERN_C const PIMAGE_TLS_CALLBACK tls_callback_func = TlsCallback;
+#pragma const_seg()

@@ -7,6 +7,11 @@ namespace util
 	inline std::mutex log_mutex;
 	inline std::ofstream log_file;
 	inline HANDLE console_output = nullptr;
+	inline HANDLE console_error = nullptr;
+	inline HANDLE console_input = nullptr;
+	inline HANDLE old_console_output = nullptr;
+	inline HANDLE old_console_error = nullptr;
+	inline HANDLE old_console_input = nullptr;
 
 	inline HMODULE GetSelfModuleHandle()
 	{
@@ -79,6 +84,70 @@ namespace util
 		}
 	}
 
+	inline void AttachConsole()
+	{
+		if (console_output != nullptr && console_output != INVALID_HANDLE_VALUE)
+		{
+			return;
+		}
+
+		old_console_output = GetStdHandle(STD_OUTPUT_HANDLE);
+		old_console_error = GetStdHandle(STD_ERROR_HANDLE);
+		old_console_input = GetStdHandle(STD_INPUT_HANDLE);
+
+		::AllocConsole() && ::AttachConsole(GetCurrentProcessId());
+
+		console_output = GetStdHandle(STD_OUTPUT_HANDLE);
+		console_error = GetStdHandle(STD_ERROR_HANDLE);
+		console_input = GetStdHandle(STD_INPUT_HANDLE);
+
+		if (console_output != nullptr && console_output != INVALID_HANDLE_VALUE)
+		{
+			SetConsoleMode(console_output, ENABLE_PROCESSED_OUTPUT | ENABLE_WRAP_AT_EOL_OUTPUT);
+		}
+
+		if (console_input != nullptr && console_input != INVALID_HANDLE_VALUE)
+		{
+			SetConsoleMode(console_input,
+				ENABLE_INSERT_MODE | ENABLE_EXTENDED_FLAGS | ENABLE_PROCESSED_INPUT | ENABLE_QUICK_EDIT_MODE);
+		}
+	}
+
+	inline void DetachConsole()
+	{
+		if (console_output && console_error && console_input)
+		{
+			FreeConsole();
+
+			if (old_console_output)
+				SetStdHandle(STD_OUTPUT_HANDLE, old_console_output);
+			if (old_console_error)
+				SetStdHandle(STD_ERROR_HANDLE, old_console_error);
+			if (old_console_input)
+				SetStdHandle(STD_INPUT_HANDLE, old_console_input);
+		}
+
+		console_output = nullptr;
+		console_error = nullptr;
+		console_input = nullptr;
+	}
+
+	inline bool ConsolePrint(const char* fmt, ...)
+	{
+		if (console_output == nullptr || console_output == INVALID_HANDLE_VALUE)
+		{
+			return false;
+		}
+
+		char buffer[2048] = {};
+		va_list args;
+		va_start(args, fmt);
+		_vsnprintf_s(buffer, sizeof(buffer), _TRUNCATE, fmt, args);
+		va_end(args);
+
+		return !!WriteConsoleA(console_output, buffer, static_cast<DWORD>(strlen(buffer)), nullptr, nullptr);
+	}
+
 	inline void WriteLine(const char* level, const char* text)
 	{
 		std::lock_guard<std::mutex> lock(log_mutex);
@@ -94,12 +163,7 @@ namespace util
 			log_file.flush();
 		}
 
-		if (console_output != nullptr && console_output != INVALID_HANDLE_VALUE)
-		{
-			DWORD written = 0;
-			WriteConsoleA(console_output, line.c_str(), static_cast<DWORD>(line.size()), &written, nullptr);
-			WriteConsoleA(console_output, "\n", 1, &written, nullptr);
-		}
+		ConsolePrint("%s\n", line.c_str());
 	}
 
 	inline void Log(const char* text)
@@ -181,60 +245,33 @@ namespace util
 
 	inline void InitConsole()
 	{
-		const BOOL attached = AttachConsole(ATTACH_PARENT_PROCESS);
-		if (!attached)
-		{
-			const DWORD attachError = GetLastError();
-			if (attachError != ERROR_ACCESS_DENIED)
-			{
-				if (!AllocConsole())
-				{
-					LogLastError("AllocConsole");
-					return;
-				}
-			}
-		}
-
-		console_output = GetStdHandle(STD_OUTPUT_HANDLE);
-		if (console_output == nullptr || console_output == INVALID_HANDLE_VALUE)
-		{
-			LogLastError("GetStdHandle(STD_OUTPUT_HANDLE)");
-			return;
-		}
-
-		auto console_input = GetStdHandle(STD_INPUT_HANDLE);
-		if (console_input != nullptr && console_input != INVALID_HANDLE_VALUE)
-		{
-			SetConsoleMode(console_input,
-				ENABLE_INSERT_MODE | ENABLE_EXTENDED_FLAGS | ENABLE_PROCESSED_INPUT | ENABLE_QUICK_EDIT_MODE);
-		}
-
-		SetConsoleMode(console_output, ENABLE_PROCESSED_OUTPUT | ENABLE_WRAP_AT_EOL_OUTPUT);
+		AttachConsole();
 		Log("Console initialized.");
 	}
 
 	inline void DisableLogReport()
 	{
-		char filename[MAX_PATH] = {};
-		GetModuleFileNameA(NULL, filename, MAX_PATH);
+		char szProcessPath[MAX_PATH] = {};
+		GetModuleFileNameA(nullptr, szProcessPath, MAX_PATH);
 
-		auto path = std::filesystem::path(filename);
-		path = path.parent_path() / (path.stem().string() + "_Data") / "Plugins";
+		auto path = std::filesystem::path(szProcessPath);
+		auto processName = path.filename().string();
+		processName = processName.substr(0, processName.find_last_of('.'));
 
-		const auto astrolabePath = path / "Astrolabe.dll";
-		const auto sdkPath = path / "MiHoYoMTRSDK.dll";
-		Logf("Trying to lock log report modules: %s ; %s", astrolabePath.string().c_str(), sdkPath.string().c_str());
+		auto astrolabe = path.parent_path() / (processName + "_Data\\Plugins\\Astrolabe.dll");
+		auto miHoYoMTRSDK = path.parent_path() / (processName + "_Data\\Plugins\\MiHoYoMTRSDK.dll");
+		Logf("Trying to lock log report modules: %s ; %s", astrolabe.string().c_str(), miHoYoMTRSDK.string().c_str());
 
-		HANDLE astrolabeHandle = CreateFileW(astrolabePath.c_str(), GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+		HANDLE astrolabeHandle = CreateFileA(astrolabe.string().c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
 		if (astrolabeHandle == INVALID_HANDLE_VALUE)
 		{
-			LogLastError("CreateFileW(Astrolabe.dll)");
+			LogLastError("CreateFileA(Astrolabe.dll)");
 		}
 
-		HANDLE sdkHandle = CreateFileW(sdkPath.c_str(), GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+		HANDLE sdkHandle = CreateFileA(miHoYoMTRSDK.string().c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
 		if (sdkHandle == INVALID_HANDLE_VALUE)
 		{
-			LogLastError("CreateFileW(MiHoYoMTRSDK.dll)");
+			LogLastError("CreateFileA(MiHoYoMTRSDK.dll)");
 		}
 	}
 

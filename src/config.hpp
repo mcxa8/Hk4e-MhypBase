@@ -45,6 +45,12 @@ namespace config
 
 	uintptr_t GetAddress(uintptr_t baseAddress, const char* a_pKey, long a_nDefault)
 	{
+		if (baseAddress == 0)
+		{
+			util::Logf("Failed to resolve %s because UserAssembly.dll is not loaded.", a_pKey);
+			return 0;
+		}
+
 		auto offset = GetOffsetValue(a_pKey, a_nDefault);
 		if (offset == 0)
 		{
@@ -69,6 +75,11 @@ namespace config
 		}
 		if (offset) {
 			util::Logf("[%s] %s = 0x%08X", client_version, a_pKey, offset);
+		}
+		else
+		{
+			util::Logf("[%s] Failed to resolve %s", client_version, a_pKey);
+			return 0;
 		}
 		return baseAddress + offset;
 	}

@@ -8,8 +8,6 @@
 #include "detours.h"
 #pragma comment(lib, "vendor/detours/detours.lib")
 
-#include <filesystem>
-#include <fstream>
 #include <string>
 #include <vector>
 #include <cstdarg>

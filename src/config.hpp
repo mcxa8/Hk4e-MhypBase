@@ -49,6 +49,31 @@ namespace config
 		return true;
 	}
 
+	bool TryReadDetectedClientVersion(const char* pkgVersionPath, const CSimpleIni& iniRef, const char*& outVersion)
+	{
+		FILE* file = nullptr;
+		if (fopen_s(&file, pkgVersionPath, "rb") != 0 || file == nullptr)
+		{
+			return false;
+		}
+
+		char lineBuffer[2048] = {};
+		while (fgets(lineBuffer, sizeof(lineBuffer), file) != nullptr)
+		{
+			std::string line = lineBuffer;
+			std::string hash;
+			if (TryExtractUserAssemblyHash(line, hash))
+			{
+				outVersion = iniRef.GetValue("MD5ClientVersion", hash.c_str(), nullptr);
+				fclose(file);
+				return outVersion != nullptr;
+			}
+		}
+
+		fclose(file);
+		return false;
+	}
+
 	static const char* client_version;
 	static const char* config_channel;
 	static const char* config_base_url;
@@ -114,7 +139,11 @@ namespace config
 		{
 			util::Logf("[%s] Failed to resolve %s", client_version == nullptr ? "<null>" : client_version, a_pKey);
 		}
-		return baseAddress + offset;
+		if (offset == 0)
+		{
+			return 0;
+		}
+		return baseAddress + static_cast<uintptr_t>(offset);
 	}
 
 	const char* GetConfigChannel()
@@ -156,23 +185,26 @@ namespace config
 		if (client_version == nullptr)
 		{
 			char filename[MAX_PATH] = {};
-			GetModuleFileName(NULL, filename, MAX_PATH);
-			auto path = std::filesystem::path(filename).parent_path() / "pkg_version";
-			std::ifstream infile(path);
-			std::string line;
-			while (std::getline(infile, line))
+			GetModuleFileNameA(NULL, filename, MAX_PATH);
+			char* lastSlash = strrchr(filename, '\\');
+			if (lastSlash == nullptr)
 			{
-				std::string str_match;
-				if (TryExtractUserAssemblyHash(line, str_match))
-				{
-					client_version = ini.GetValue("MD5ClientVersion", str_match.c_str(), nullptr);
-					if (client_version == nullptr)
-					{
-						client_version = "Offset";
-					}
-					util::Logf("Version detected %s", client_version);
-					break;
-				}
+				lastSlash = strrchr(filename, '/');
+			}
+			if (lastSlash != nullptr)
+			{
+				lastSlash[1] = '\0';
+			}
+
+			char pkgVersionPath[MAX_PATH] = {};
+			sprintf_s(pkgVersionPath, "%spkg_version", filename);
+			if (TryReadDetectedClientVersion(pkgVersionPath, ini, client_version))
+			{
+				util::Logf("Version detected %s", client_version);
+			}
+			else
+			{
+				client_version = "Offset";
 			}
 		}
 		magic_a = ini.GetLongValue(client_version, "magic_a", 0);

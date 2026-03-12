@@ -28,8 +28,25 @@ namespace util
 
 	inline std::string GetFilePathInModuleDirectory(const char* filename)
 	{
-		auto path = std::filesystem::path(GetModulePath()).parent_path() / filename;
-		return path.string();
+		char modulePath[MAX_PATH] = {};
+		DWORD length = GetModuleFileNameA(GetSelfModuleHandle(), modulePath, MAX_PATH);
+		if (length == 0 || length >= MAX_PATH)
+		{
+			return filename == nullptr ? std::string() : std::string(filename);
+		}
+
+		for (DWORD i = length; i > 0; --i)
+		{
+			if (modulePath[i - 1] == '\\' || modulePath[i - 1] == '/')
+			{
+				modulePath[i] = '\0';
+				break;
+			}
+		}
+
+		char fullPath[MAX_PATH] = {};
+		sprintf_s(fullPath, "%s%s", modulePath, filename == nullptr ? "" : filename);
+		return fullPath;
 	}
 
 	inline std::string GetConfigPath()
@@ -342,22 +359,44 @@ namespace util
 	{
 		char szProcessPath[MAX_PATH] = {};
 		GetModuleFileNameA(nullptr, szProcessPath, MAX_PATH);
+		char directory[MAX_PATH] = {};
+		char processName[MAX_PATH] = {};
+		strcpy_s(directory, szProcessPath);
+		char* lastSlash = strrchr(directory, '\\');
+		if (lastSlash == nullptr)
+		{
+			lastSlash = strrchr(directory, '/');
+		}
+		if (lastSlash != nullptr)
+		{
+			strcpy_s(processName, lastSlash + 1);
+			lastSlash[1] = '\0';
+		}
+		else
+		{
+			strcpy_s(processName, directory);
+			directory[0] = '\0';
+		}
 
-		auto path = std::filesystem::path(szProcessPath);
-		auto processName = path.filename().string();
-		processName = processName.substr(0, processName.find_last_of('.'));
+		char* dot = strrchr(processName, '.');
+		if (dot != nullptr)
+		{
+			*dot = '\0';
+		}
 
-		auto astrolabe = path.parent_path() / (processName + "_Data\\Plugins\\Astrolabe.dll");
-		auto miHoYoMTRSDK = path.parent_path() / (processName + "_Data\\Plugins\\MiHoYoMTRSDK.dll");
-		Logf("Trying to lock log report modules: %s ; %s", astrolabe.string().c_str(), miHoYoMTRSDK.string().c_str());
+		char astrolabe[MAX_PATH] = {};
+		char miHoYoMTRSDK[MAX_PATH] = {};
+		sprintf_s(astrolabe, "%s%s_Data\\Plugins\\Astrolabe.dll", directory, processName);
+		sprintf_s(miHoYoMTRSDK, "%s%s_Data\\Plugins\\MiHoYoMTRSDK.dll", directory, processName);
+		Logf("Trying to lock log report modules: %s ; %s", astrolabe, miHoYoMTRSDK);
 
-		HANDLE astrolabeHandle = CreateFileA(astrolabe.string().c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+		HANDLE astrolabeHandle = CreateFileA(astrolabe, GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
 		if (astrolabeHandle == INVALID_HANDLE_VALUE)
 		{
 			LogLastError("CreateFileA(Astrolabe.dll)");
 		}
 
-		HANDLE sdkHandle = CreateFileA(miHoYoMTRSDK.string().c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+		HANDLE sdkHandle = CreateFileA(miHoYoMTRSDK, GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
 		if (sdkHandle == INVALID_HANDLE_VALUE)
 		{
 			LogLastError("CreateFileA(MiHoYoMTRSDK.dll)");

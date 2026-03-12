@@ -21,6 +21,11 @@ public:
 	template <typename Fn>
 	static void install(Fn func, Fn handler)
 	{
+		if (func == nullptr || handler == nullptr)
+		{
+			util::Logf("Skipping hook install target=%p handler=%p because one side is null.", ToPointer(func), ToPointer(handler));
+			return;
+		}
 		enable(func, handler);
 		holderMap[ToPointer(handler)] = ToPointer(func);
 	}

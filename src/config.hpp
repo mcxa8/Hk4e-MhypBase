@@ -57,13 +57,13 @@ namespace config
 					pattern = pattern + 1;
 					auto value = util::FindEntry(util::PatternScan("UserAssembly.dll", pattern));
 					if (value)
-						offset = value - baseAddress;
+						offset = static_cast<long>(value - baseAddress);
 				}
 				else
 				{
 					auto value = util::PatternScan("UserAssembly.dll", pattern);
 					if (value)
-						offset = value - baseAddress;
+						offset = static_cast<long>(value - baseAddress);
 				}
 			}
 		}

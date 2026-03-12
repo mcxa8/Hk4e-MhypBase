@@ -309,13 +309,27 @@ namespace util
 
 		auto bytePtr = reinterpret_cast<unsigned char*>(ptr);
 		auto lengthPtr = reinterpret_cast<unsigned int*>(bytePtr + 0x10);
-		auto charPtr = reinterpret_cast<char16_t*>(bytePtr + 0x14);
-		auto size = lengthPtr[0];
-		std::u16string u16;
-		u16.resize(size);
-		memcpy((char*)&u16[0], (char*)charPtr, size * sizeof(char16_t));
-		std::wstring_convert<std::codecvt_utf8<char16_t>, char16_t> converter;
-		return converter.to_bytes(u16);
+		auto charPtr = reinterpret_cast<LPCWCH>(bytePtr + 0x14);
+		auto size = static_cast<int>(lengthPtr[0]);
+		if (size <= 0)
+		{
+			return {};
+		}
+
+		int utf8Size = WideCharToMultiByte(CP_UTF8, 0, charPtr, size, nullptr, 0, nullptr, nullptr);
+		if (utf8Size <= 0)
+		{
+			return {};
+		}
+
+		std::string text;
+		text.resize(utf8Size);
+		if (WideCharToMultiByte(CP_UTF8, 0, charPtr, size, text.data(), utf8Size, nullptr, nullptr) <= 0)
+		{
+			return {};
+		}
+
+		return text;
 	}
 
 	inline void InitConsole()

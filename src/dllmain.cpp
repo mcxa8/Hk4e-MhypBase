@@ -9,6 +9,27 @@
 
 namespace
 {
+	void EarlyLog(const char* fmt, ...)
+	{
+		char buffer[1024] = {};
+		va_list args;
+		va_start(args, fmt);
+		_vsnprintf_s(buffer, sizeof(buffer), _TRUNCATE, fmt, args);
+		va_end(args);
+
+		HANDLE file = CreateFileA("mhypbase-early.log", FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+		if (file != INVALID_HANDLE_VALUE)
+		{
+			DWORD written = 0;
+			WriteFile(file, buffer, static_cast<DWORD>(strlen(buffer)), &written, nullptr);
+			WriteFile(file, "\r\n", 2, &written, nullptr);
+			CloseHandle(file);
+		}
+
+		OutputDebugStringA(buffer);
+		OutputDebugStringA("\n");
+	}
+
 	struct UnityWindowState
 	{
 		DWORD pid;
@@ -98,16 +119,16 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 		DisableThreadLibraryCalls(hinstDLL);
 		char selfPath[MAX_PATH] = {};
 		GetModuleFileNameA(hinstDLL, selfPath, MAX_PATH);
-		util::Logf("DllMain attach: module=%s reserved=%p", selfPath, lpvReserved);
+		EarlyLog("DllMain attach: module=%s reserved=%p", selfPath, lpvReserved);
 		exports::Load();
 		if (HANDLE hThread = CreateThread(NULL, 0, Thread, hinstDLL, 0, NULL))
 		{
-			util::Logf("Created worker thread handle=%p", hThread);
+			EarlyLog("Created worker thread handle=%p", hThread);
 			CloseHandle(hThread);
 		}
 		else
 		{
-			util::LogLastError("CreateThread");
+			EarlyLog("CreateThread failed with Win32 error %lu", GetLastError());
 		}
 	}
 	return TRUE;
@@ -119,10 +140,10 @@ void __stdcall TlsCallback(PVOID hModule, DWORD fdwReason, PVOID pContext)
 {
 	if (!TlsOnce)
 	{
-		util::Logf("TLS callback entered: module=%p reason=%lu context=%p", hModule, fdwReason, pContext);
+		EarlyLog("TLS callback entered: module=%p reason=%lu context=%p", hModule, fdwReason, pContext);
 		util::DisableLogReport();
 		exports::Load();
-		util::Log("TLS callback finished early initialization.");
+		EarlyLog("TLS callback finished early initialization.");
 		TlsOnce = true;
 	}
 }
